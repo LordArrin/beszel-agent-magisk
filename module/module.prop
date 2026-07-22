@@ -1,0 +1,6 @@
+id=beszel-agent
+name=Beszel Agent
+version=v1.0.0
+versionCode=10000
+author=StevenArai
+description=Runs beszel-agent as a Magisk late_start service. Configure KEY / TOKEN / HUB_URL in /data/adb/modules/beszel-agent/.env

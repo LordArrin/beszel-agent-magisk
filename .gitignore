@@ -1,0 +1,21 @@
+# Secrets / personal config
+module/.env
+.env
+*.env.local
+
+# Build outputs
+dist/
+*.zip
+!module/**/*.zip
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs
+*.log
