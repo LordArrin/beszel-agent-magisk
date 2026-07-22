@@ -116,4 +116,6 @@ adb shell su -c '/data/adb/modules/beszel-agent/bin/beszel-agent -h'
 
 ## License
 
-Agent binaries are from the upstream Beszel project. Module packaging is provided as-is.
+This Magisk module packaging is released under the **BSD 3-Clause License** (see [LICENSE](LICENSE)).
+
+Upstream `beszel-agent` binaries are from [henrygd/beszel](https://github.com/henrygd/beszel) and remain under that project’s license.
