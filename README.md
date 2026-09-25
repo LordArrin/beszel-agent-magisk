@@ -1,16 +1,20 @@
 # Beszel Agent Magisk Module
 
-Runs [beszel-agent](https://github.com/henrygd/beszel) as a Magisk **late_start** service on Android (ARM / ARM64).
+Runs [beszel-agent](https://github.com/henrygd/beszel) as a Magisk **late_start** service on Android. 
+
+To keep the module lightweight and up-to-date, binaries are no longer bundled. The installer automatically detects your device's architecture and downloads the latest official `beszel-agent` release directly from GitHub during installation.
 
 ## Requirements
 
-- Magisk **v20.4+** (recommended: current Magisk)
-- Device ABI: `arm64-v8a` / `aarch64` **or** `armeabi-v7a` / 32-bit ARM
+- Magisk **v20.4+** (also compatible with KernelSU / APatch)
+- Device ABI: `arm64-v8a`, `armeabi-v7a`, `x86_64`, or `x86`
+- **An active internet connection** during module installation (to download the agent binary)
 - A reachable Beszel Hub and agent credentials (`KEY`, `TOKEN`, `HUB_URL`)
 
 ## Install
 
-1. Flash `beszel-agent-magisk-vX.Y.Z.zip` in Magisk Manager (Modules → Install from storage).
+1. Flash `beszel-agent-magisk-vX.Y.Z.zip` in Magisk Manager (Modules → Install from storage). 
+   *(The installer will automatically fetch the correct binary for your architecture).*
 2. Edit config:
 
    ```text
@@ -25,24 +29,26 @@ Runs [beszel-agent](https://github.com/henrygd/beszel) as a Magisk **late_start*
    FILESYSTEM=/data
    ```
 
-3. Reboot. The agent starts after `sys.boot_completed`.
+3. Reboot. The agent starts automatically after `sys.boot_completed`.
 
 ## Architecture selection
 
-Handled in `customize.sh` at install time using Magisk’s `$ARCH`:
+Handled dynamically in `customize.sh` at install time. The script maps Magisk's `$ARCH` variable to the official Beszel release assets and downloads the latest version:
 
-| Magisk `$ARCH` | Typical ABIs                         | Binary used            |
-|----------------|--------------------------------------|------------------------|
-| `arm64`        | `arm64-v8a`, `aarch64`               | `beszel-agent-arm64`   |
-| `arm`          | `armeabi-v7a`, `armv7l`, `armv8l` 32-bit | `beszel-agent-arm` |
+| Magisk `$ARCH` | Typical ABIs                         | Beszel Asset Downloaded                  |
+|----------------|--------------------------------------|------------------------------------------|
+| `arm64`        | `arm64-v8a`, `aarch64`               | `beszel-agent_linux_arm64.tar.gz`        |
+| `arm`          | `armeabi-v7a`, `armv7l`, `armv8l`    | `beszel-agent_linux_armv7.tar.gz`        |
+| `x64`          | `x86_64`                             | `beszel-agent_linux_amd64.tar.gz`        |
+| `x86`          | `i386`, `i686`                       | `beszel-agent_linux_386.tar.gz`          |
 
-The selected binary is renamed to `bin/beszel-agent`; the other is removed to save space.
+The downloaded archive is extracted, documentation files are stripped, and the binary is placed in `bin/beszel-agent`.
 
 ## Runtime
 
 `service.sh` (late_start):
 
-Magisk runs `service` stage with **`fork_dont_care`** (non-blocking).  
+Magisk runs the `service` stage with **`fork_dont_care`** (non-blocking).  
 `service.sh` therefore:
 
 1. Waits for `sys.boot_completed`
@@ -61,40 +67,28 @@ Magisk runs `service` stage with **`fork_dont_care`** (non-blocking).
    ```
 
 Equivalent intent to systemd `Restart=always` with exponential `RestartSec`.  
-Only handles **process exit**, not hung-but-alive agents.
+*Note: Only handles **process exit**, not hung-but-alive agents.*
 
-Agent state (fingerprint) is stored under `DATA_DIR` (default `/data/adb/modules/beszel-agent/data`). Android has no usable `/var/lib/beszel-agent`; without `DATA_DIR` the agent cannot persist identity and Hub may reject with `fingerprint mismatch` after re-registration.
+Agent state (fingerprint) is stored under `DATA_DIR` (default `/data/adb/modules/beszel-agent/data`). Android has no usable `/var/lib/beszel-agent`; without `DATA_DIR` the agent cannot persist identity and Hub may reject it with `fingerprint mismatch` after re-registration.
 
-Logs: `/data/adb/modules/beszel-agent/beszel-agent.log`  
-Supervisor pid: `/data/adb/modules/beszel-agent/supervise.pid`
+- **Logs:** `/data/adb/modules/beszel-agent/beszel-agent.log`  
+- **Supervisor pid:** `/data/adb/modules/beszel-agent/supervise.pid`
 
 ## Project layout
 
 ```text
 module/
   module.prop
-  customize.sh          # arch detect + binary install
+  customize.sh          # arch detect + dynamic binary download
   service.sh            # late_start launcher
   .env.example          # template (no secrets)
-  bin/
-    beszel-agent-arm
-    beszel-agent-arm64
+  bin/                  # populated at install time (empty in repo)
   META-INF/com/google/android/
     update-binary
     updater-script
 ```
 
-## Build zips
-
-```sh
-# public release (no credentials)
-./build.sh
-
-# or on Windows PowerShell
-./build.ps1
-```
-
-Outputs under `dist/`:
+Outputs under `dist/` (if using a build script):
 
 - `beszel-agent-magisk-vX.Y.Z.zip` — publishable (uses `.env.example` only)
 - `beszel-agent-magisk-vX.Y.Z-personal.zip` — includes your local `module/.env` (gitignored)
@@ -108,7 +102,7 @@ adb shell getprop ro.product.cpu.abi
 adb shell uname -m
 ```
 
-After install, without rebooting you can dry-run the binary (will connect to your hub):
+After install, without rebooting you can dry-run the binary (will print help, or connect to your hub if credentials are set):
 
 ```sh
 adb shell su -c '/data/adb/modules/beszel-agent/bin/beszel-agent -h'
@@ -116,6 +110,6 @@ adb shell su -c '/data/adb/modules/beszel-agent/bin/beszel-agent -h'
 
 ## License
 
-This Magisk module packaging is released under the **BSD 3-Clause License** (see [LICENSE](LICENSE)).
+This Magisk module packaging is released under the **AGPL-3.0 license** (see [LICENSE](LICENSE)).
 
-Upstream `beszel-agent` binaries are from [henrygd/beszel](https://github.com/henrygd/beszel) and remain under that project’s license.
+Upstream `beszel-agent` binaries are dynamically downloaded from [henrygd/beszel](https://github.com/henrygd/beszel) and remain under that project’s original license (MIT).
