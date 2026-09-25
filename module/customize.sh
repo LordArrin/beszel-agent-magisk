@@ -1,40 +1,58 @@
 #!/system/bin/sh
-# Magisk module installer customization.
-# Sourced (not executed) by Magisk installer after unzip.
-# $ARCH is set by Magisk: arm | arm64 | x86 | x64 | riscv64
-# $IS64BIT is true/false.
 
-# We only ship ARM binaries (arm + arm64).
+# Map Magisk $ARCH to Beszel agent release architecture
 case "$ARCH" in
-  arm|arm64) ;;
-  *)
-    abort "! Unsupported architecture: $ARCH (need arm or arm64)"
-    ;;
+  arm64) BESZEL_ARCH="arm64" ;;
+  arm) BESZEL_ARCH="armv7" ;;
+  x64) BESZEL_ARCH="amd64" ;;
+  x86) BESZEL_ARCH="386" ;;
+  *) abort "! Unsupported architecture: $ARCH" ;;
 esac
 
-ui_print "- Device architecture: $ARCH (IS64BIT=$IS64BIT)"
+ui_print "- Device architecture: $ARCH (mapped to beszel-agent_linux_${BESZEL_ARCH})"
 
-# Magisk $ARCH already maps:
-#   arm64-v8a / aarch64  -> arm64
-#   armeabi-v7a / armv7l / armv8l (32-bit userspace) -> arm
-# Pick matching binary, install as a single name, drop the other.
 BINDIR="$MODPATH/bin"
-if [ "$ARCH" = "arm64" ]; then
-  SELECTED="beszel-agent-arm64"
-  REMOVED="beszel-agent-arm"
+mkdir -p "$BINDIR"
+cd "$BINDIR" || abort "! Failed to enter $BINDIR"
+
+# GitHub automatically redirects this URL to the latest release asset
+BESZEL_URL="https://github.com/henrygd/beszel/releases/latest/download/beszel-agent_linux_${BESZEL_ARCH}.tar.gz"
+ui_print "- Downloading latest beszel-agent..."
+
+DOWNLOADED=0
+if command -v curl >/dev/null 2>&1; then
+  # -s: silent, -L: follow redirects, -o: output file
+  if curl -sLo beszel-agent.tar.gz "$BESZEL_URL"; then
+    DOWNLOADED=1
+  fi
+fi
+
+if [ "$DOWNLOADED" = 0 ] && command -v wget >/dev/null 2>&1; then
+  # -q: quiet, -O: output file (wget follows redirects by default)
+  if wget -qO beszel-agent.tar.gz "$BESZEL_URL"; then
+    DOWNLOADED=1
+  fi
+fi
+
+if [ "$DOWNLOADED" = 0 ] || [ ! -s beszel-agent.tar.gz ]; then
+  rm -f beszel-agent.tar.gz
+  abort "! Failed to download beszel-agent. Check your internet connection."
+fi
+
+ui_print "- Extracting..."
+if tar -xzf beszel-agent.tar.gz; then
+  # Remove archive and unnecessary docs, keep only the binary
+  rm -f beszel-agent.tar.gz LICENSE readme.md
 else
-  SELECTED="beszel-agent-arm"
-  REMOVED="beszel-agent-arm64"
+  rm -f beszel-agent.tar.gz
+  abort "! Failed to extract beszel-agent.tar.gz"
 fi
 
-if [ ! -f "$BINDIR/$SELECTED" ]; then
-  abort "! Missing binary: bin/$SELECTED"
+if [ ! -f beszel-agent ]; then
+  abort "! beszel-agent binary not found after extraction."
 fi
 
-ui_print "- Installing $SELECTED as bin/beszel-agent"
-mv -f "$BINDIR/$SELECTED" "$BINDIR/beszel-agent"
-rm -f "$BINDIR/$REMOVED"
-
+ui_print "- beszel-agent installed successfully."
 set_perm "$BINDIR/beszel-agent" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
 
@@ -43,8 +61,7 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 mkdir -p "$MODPATH/data"
 set_perm "$MODPATH/data" 0 0 0700
 
-# Ship a template .env if the user doesn't already have one.
-# Never overwrite an existing .env (preserves credentials across updates).
+# Never overwrite an existing .env to preserve credentials across updates.
 if [ ! -f "$MODPATH/.env" ]; then
   if [ -f "$MODPATH/.env.example" ]; then
     ui_print "- Creating .env from .env.example (edit it before reboot)"
