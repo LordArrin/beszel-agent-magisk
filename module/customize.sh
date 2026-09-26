@@ -1,30 +1,47 @@
 #!/system/bin/sh
 
-# Persistent config directory (survives module removal/updates)
 CONFIG_DIR="/data/adb/beszel-agent"
 ENV_FILE="$CONFIG_DIR/.env"
 DATA_DIR="$CONFIG_DIR/data"
 
-# Create config directory if it doesn't exist
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$DATA_DIR"
 chmod 0700 "$CONFIG_DIR"
 chmod 0700 "$DATA_DIR"
 
-# Copy .env.example to .env only if .env doesn't exist (preserve existing config)
+# First installation: check for user-provided config in internal storage
 if [ ! -f "$ENV_FILE" ]; then
-  if [ -f "$MODPATH/.env.example" ]; then
-    ui_print "- Creating $ENV_FILE from template (edit it before reboot)"
-    cp -f "$MODPATH/.env.example" "$ENV_FILE"
-    chmod 0600 "$ENV_FILE"
-  else
-    ui_print "! No .env.example found; create $ENV_FILE manually"
+  CONFIG_LOADED=false
+  
+  # Check common paths for internal storage (works on Android 9-17)
+  for storage_path in "/storage/emulated/0" "/sdcard" "/mnt/sdcard"; do
+    if [ -f "$storage_path/beszel.txt" ]; then
+      ui_print "- Found config: $storage_path/beszel.txt"
+      cp -f "$storage_path/beszel.txt" "$ENV_FILE"
+      chmod 0600 "$ENV_FILE"
+      ui_print "- Config loaded from $storage_path/beszel.txt"
+      CONFIG_LOADED=true
+      break
+    fi
+  done
+  
+  # Fallback to .env.example if no user config found
+  if [ "$CONFIG_LOADED" = false ]; then
+    if [ -f "$MODPATH/.env.example" ]; then
+      ui_print "- Creating $ENV_FILE from template (edit it before reboot)"
+      cp -f "$MODPATH/.env.example" "$ENV_FILE"
+      chmod 0600 "$ENV_FILE"
+      ui_print "- No beszel.txt found in internal storage"
+      ui_print "- To auto-load config, place beszel.txt in /sdcard/ before install"
+    else
+      ui_print "! No .env.example found; create $ENV_FILE manually"
+    fi
   fi
 else
   ui_print "- Keeping existing $ENV_FILE"
 fi
 
-# Map Magisk $ARCH to Beszel agent release architecture
+# Architecture detection and binary download
 case "$ARCH" in
   arm64) BESZEL_ARCH="arm64" ;;
   arm) BESZEL_ARCH="armv7" ;;
@@ -39,7 +56,6 @@ BINDIR="$MODPATH/bin"
 mkdir -p "$BINDIR"
 cd "$BINDIR" || abort "! Failed to enter $BINDIR"
 
-# GitHub automatically redirects this URL to the latest release asset
 BESZEL_URL="https://github.com/henrygd/beszel/releases/latest/download/beszel-agent_linux_${BESZEL_ARCH}.tar.gz"
 ui_print "- Downloading latest beszel-agent..."
 
