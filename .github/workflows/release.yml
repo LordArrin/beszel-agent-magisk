@@ -1,46 +1,87 @@
-name: Release Module
+name: Auto Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'module/module.prop'
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       
-      - name: Get version from tag
+      - name: Get version info from module.prop
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      
-      - name: Get versionCode from module.prop
-        id: versioncode
         run: |
-          CODE=$(grep 'versionCode=' module/module.prop | cut -d'=' -f2)
+          VERSION=$(grep '^version=' module/module.prop | cut -d'=' -f2 | tr -d ' ')
+          CODE=$(grep '^versionCode=' module/module.prop | cut -d'=' -f2 | tr -d ' ')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "CODE=$CODE" >> $GITHUB_OUTPUT
       
+      - name: Check if version changed
+        id: check
+        run: |
+          # Get previous version
+          git checkout HEAD~1 -- module/module.prop 2>/dev/null || true
+          OLD_VERSION=$(grep '^version=' module/module.prop | cut -d'=' -f2 | tr -d ' ')
+          OLD_CODE=$(grep '^versionCode=' module/module.prop | cut -d'=' -f2 | tr -d ' ')
+          
+          # Restore current version
+          git checkout HEAD -- module/module.prop
+          
+          NEW_VERSION="${{ steps.version.outputs.VERSION }}"
+          NEW_CODE="${{ steps.version.outputs.CODE }}"
+          
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ] || [ "$OLD_CODE" != "$NEW_CODE" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Version changed from $OLD_VERSION ($OLD_CODE) to $NEW_VERSION ($NEW_CODE)"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Version did not change, skipping release"
+          fi
+      
       - name: Create ZIP
+        if: steps.check.outputs.changed == 'true'
         run: |
           cd module
-          zip -r ../beszel-agent-magisk-${{ steps.version.outputs.VERSION }}.zip . -x "*.git*" -x "*.DS_Store"
+          zip -r ../beszel-agent-magisk-${{ steps.version.outputs.VERSION }}.zip . \
+            -x "*.git*" \
+            -x "*.DS_Store" \
+            -x "*.env"
           cd ..
       
       - name: Update update.json
+        if: steps.check.outputs.changed == 'true'
         run: |
           cat > update.json << EOF
           {
             "version": "${{ steps.version.outputs.VERSION }}",
-            "versionCode": ${{ steps.versioncode.outputs.CODE }},
+            "versionCode": ${{ steps.version.outputs.CODE }},
             "zipUrl": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/beszel-agent-magisk-${{ steps.version.outputs.VERSION }}.zip",
             "changelog": "https://raw.githubusercontent.com/${{ github.repository }}/main/CHANGELOG.md"
           }
           EOF
       
       - name: Create Release
+        if: steps.check.outputs.changed == 'true'
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: ${{ steps.version.outputs.VERSION }}
+          body: |
+            Beszel Agent Magisk Module
+            
+            **Version:** ${{ steps.version.outputs.VERSION }}
+            **Version Code:** ${{ steps.version.outputs.CODE }}
+            
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
           files: |
             beszel-agent-magisk-*.zip
             update.json
