@@ -1,23 +1,15 @@
 #!/system/bin/sh
-# late_start service: keep beszel-agent running with exponential backoff on death.
-#
-# Magisk fact (native/src/core/scripting.cpp):
-#   post-fs-data  → fork + wait (blocking, with timeout)
-#   service       → fork_dont_care (NON-BLOCKING fire-and-forget)
-# So this script must background its own supervisor and EXIT quickly.
-#
-# Config: $MODDIR/.env  (KEY / TOKEN / HUB_URL [/ FILESYSTEM / DATA_DIR])
 
 MODDIR=${0%/*}
 BIN="$MODDIR/bin/beszel-agent"
-ENV_FILE="$MODDIR/.env"
-LOG="$MODDIR/beszel-agent.log"
-PIDFILE="$MODDIR/supervise.pid"
-# Persistent agent state (fingerprint). Must be writable and survive reboot.
-DEFAULT_DATA_DIR="$MODDIR/data"
 
-# Backoff after unexpected agent exit: 1s → 2s → 4s → … → 300s cap.
-# Reset to MIN after a run that stayed up at least RESET_AFTER_SECS.
+# Persistent config and data directories
+CONFIG_DIR="/data/adb/beszel-agent"
+ENV_FILE="$CONFIG_DIR/.env"
+DATA_DIR="$CONFIG_DIR/data"
+LOG="$CONFIG_DIR/beszel-agent.log"
+PIDFILE="$CONFIG_DIR/supervise.pid"
+
 MIN_BACKOFF=1
 MAX_BACKOFF=300
 RESET_AFTER_SECS=60
@@ -26,7 +18,7 @@ log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null
 }
 
-# --- single-instance guard for the supervisor itself ---
+# Single-instance guard
 if [ -f "$PIDFILE" ]; then
   old=$(cat "$PIDFILE" 2>/dev/null)
   if [ -n "$old" ] && [ -d "/proc/$old" ]; then
@@ -35,7 +27,7 @@ if [ -f "$PIDFILE" ]; then
   rm -f "$PIDFILE"
 fi
 
-# Wait until Android reports boot finished (service stage can fire early).
+# Wait for boot completion
 if command -v resetprop >/dev/null 2>&1; then
   resetprop -w sys.boot_completed 0
 else
@@ -46,9 +38,9 @@ else
   done
 fi
 
-# Give networking a short grace period after boot_completed.
 sleep 5
 
+# Ensure binary is executable
 if [ ! -x "$BIN" ]; then
   [ -f "$BIN" ] && chmod 0755 "$BIN"
 fi
@@ -63,8 +55,8 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-# Parse .env (KEY=value or set KEY=value; ignore blanks/comments).
-KEY=""; TOKEN=""; HUB_URL=""; FILESYSTEM=""; LISTEN=""; DATA_DIR=""
+# Parse .env
+KEY=""; TOKEN=""; HUB_URL=""; FILESYSTEM=""; LISTEN=""
 while IFS= read -r line || [ -n "$line" ]; do
   line=$(printf '%s' "$line" | tr -d '\r')
   while [ -n "$line" ]; do
@@ -97,7 +89,6 @@ while IFS= read -r line || [ -n "$line" ]; do
     HUB_URL) HUB_URL="$val" ;;
     FILESYSTEM) FILESYSTEM="$val" ;;
     LISTEN) LISTEN="$val" ;;
-    DATA_DIR) DATA_DIR="$val" ;;
   esac
 done < "$ENV_FILE"
 
@@ -107,7 +98,6 @@ if [ -z "$KEY" ] || [ -z "$TOKEN" ] || [ -z "$HUB_URL" ]; then
 fi
 
 [ -n "$FILESYSTEM" ] || FILESYSTEM="/data"
-[ -n "$DATA_DIR" ] || DATA_DIR="$DEFAULT_DATA_DIR"
 mkdir -p "$DATA_DIR" 2>/dev/null
 chmod 700 "$DATA_DIR" 2>/dev/null
 
@@ -115,7 +105,7 @@ export FILESYSTEM
 export DATA_DIR
 [ -n "$LISTEN" ] && export LISTEN
 
-# Double-check supervisor singleton after slow boot wait.
+# Double-check supervisor singleton
 if [ -f "$PIDFILE" ]; then
   old=$(cat "$PIDFILE" 2>/dev/null)
   if [ -n "$old" ] && [ -d "/proc/$old" ]; then
@@ -127,9 +117,8 @@ fi
   echo $$ > "$PIDFILE"
   log "supervisor started pid=$$ DATA_DIR=$DATA_DIR"
 
-  # If an orphan agent is already running, wait for it (do not kill).
   if pidof beszel-agent >/dev/null 2>&1; then
-    log "beszel-agent already running; waiting for it to exit before supervising"
+    log "beszel-agent already running; waiting for it to exit"
     while pidof beszel-agent >/dev/null 2>&1; do
       sleep 5
     done

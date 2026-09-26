@@ -1,5 +1,29 @@
 #!/system/bin/sh
 
+# Persistent config directory (survives module removal/updates)
+CONFIG_DIR="/data/adb/beszel-agent"
+ENV_FILE="$CONFIG_DIR/.env"
+DATA_DIR="$CONFIG_DIR/data"
+
+# Create config directory if it doesn't exist
+mkdir -p "$CONFIG_DIR"
+mkdir -p "$DATA_DIR"
+chmod 0700 "$CONFIG_DIR"
+chmod 0700 "$DATA_DIR"
+
+# Copy .env.example to .env only if .env doesn't exist (preserve existing config)
+if [ ! -f "$ENV_FILE" ]; then
+  if [ -f "$MODPATH/.env.example" ]; then
+    ui_print "- Creating $ENV_FILE from template (edit it before reboot)"
+    cp -f "$MODPATH/.env.example" "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+  else
+    ui_print "! No .env.example found; create $ENV_FILE manually"
+  fi
+else
+  ui_print "- Keeping existing $ENV_FILE"
+fi
+
 # Map Magisk $ARCH to Beszel agent release architecture
 case "$ARCH" in
   arm64) BESZEL_ARCH="arm64" ;;
@@ -21,14 +45,12 @@ ui_print "- Downloading latest beszel-agent..."
 
 DOWNLOADED=0
 if command -v curl >/dev/null 2>&1; then
-  # -s: silent, -L: follow redirects, -o: output file
   if curl -sLo beszel-agent.tar.gz "$BESZEL_URL"; then
     DOWNLOADED=1
   fi
 fi
 
 if [ "$DOWNLOADED" = 0 ] && command -v wget >/dev/null 2>&1; then
-  # -q: quiet, -O: output file (wget follows redirects by default)
   if wget -qO beszel-agent.tar.gz "$BESZEL_URL"; then
     DOWNLOADED=1
   fi
@@ -41,7 +63,6 @@ fi
 
 ui_print "- Extracting..."
 if tar -xzf beszel-agent.tar.gz; then
-  # Remove archive and unnecessary docs, keep only the binary
   rm -f beszel-agent.tar.gz LICENSE readme.md
 else
   rm -f beszel-agent.tar.gz
@@ -56,29 +77,6 @@ ui_print "- beszel-agent installed successfully."
 set_perm "$BINDIR/beszel-agent" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
 
-# Persistent agent state (fingerprint). Required on Android — default
-# /var/lib/beszel-agent is not usable / not writable.
-mkdir -p "$MODPATH/data"
-set_perm "$MODPATH/data" 0 0 0700
-
-# Never overwrite an existing .env to preserve credentials across updates.
-if [ ! -f "$MODPATH/.env" ]; then
-  if [ -f "$MODPATH/.env.example" ]; then
-    ui_print "- Creating .env from .env.example (edit it before reboot)"
-    cp -f "$MODPATH/.env.example" "$MODPATH/.env"
-    set_perm "$MODPATH/.env" 0 0 0600
-  else
-    ui_print "! No .env.example found; create $MODPATH/.env manually"
-  fi
-else
-  ui_print "- Keeping existing .env"
-  set_perm "$MODPATH/.env" 0 0 0600
-fi
-
-# Ensure DATA_DIR is set for upgrades that predate this field.
-if [ -f "$MODPATH/.env" ] && ! grep -q '^DATA_DIR=' "$MODPATH/.env" 2>/dev/null; then
-  ui_print "- Appending DATA_DIR=$MODPATH/data to .env"
-  printf '\nDATA_DIR=%s\n' "$MODPATH/data" >> "$MODPATH/.env"
-fi
-
-ui_print "- Done. Edit /data/adb/modules/beszel-agent/.env then reboot."
+ui_print "- Config directory: $CONFIG_DIR"
+ui_print "- Data directory: $DATA_DIR"
+ui_print "- Done. Edit $ENV_FILE then reboot."
