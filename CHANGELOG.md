@@ -1,3 +1,5 @@
+## v1.0.1
+- Fix arch detection
 ## v1.0.0
 - Initial release
 - Automatic beszel-agent download from GitHub
