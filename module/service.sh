@@ -18,6 +18,7 @@ log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null
 }
 
+# Update module description in KernelSU/Magisk UI
 update_status() {
   local status="$1"
   if [ -f "$PROP_FILE" ]; then

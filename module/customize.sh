@@ -90,12 +90,8 @@ if [ ! -f beszel-agent ]; then
 fi
 
 ui_print "- beszel-agent installed successfully."
-
-# Set permissions for all scripts
 set_perm "$BINDIR/beszel-agent" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
-set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
-set_perm "$MODPATH/run.sh" 0 0 0755
 
 ui_print "- Config directory: $CONFIG_DIR"
 ui_print "- Data directory: $DATA_DIR"
