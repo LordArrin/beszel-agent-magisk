@@ -29,6 +29,7 @@ BINDIR="$MODPATH/bin"
 CONFIG_DIR="/data/adb/beszel-agent"
 VERSION_FILE="$CONFIG_DIR/.version"
 ARCH_FILE="$CONFIG_DIR/.arch"
+PIDFILE="$CONFIG_DIR/beszel-agent.pid"
 
 mkdir -p "$BINDIR" "$CONFIG_DIR"
 
@@ -125,9 +126,28 @@ fi
 
 if [ "$NEED_RESTART" = "1" ]; then
     ui_print "- Stopping existing agent..."
+    
+    if [ -f "$PIDFILE" ]; then
+        OLD_PID=$(cat "$PIDFILE" 2>/dev/null)
+        if [ -n "$OLD_PID" ] && [ -d "/proc/$OLD_PID" ]; then
+            kill -TERM "$OLD_PID" 2>/dev/null
+            WAIT_COUNT=0
+            while [ -d "/proc/$OLD_PID" ] && [ $WAIT_COUNT -lt 10 ]; do
+                sleep 1
+                WAIT_COUNT=$((WAIT_COUNT + 1))
+            done
+            if [ -d "/proc/$OLD_PID" ]; then
+                kill -KILL "$OLD_PID" 2>/dev/null
+                sleep 1
+            fi
+        fi
+        rm -f "$PIDFILE"
+    fi
+    
     killall -TERM beszel-agent 2>/dev/null
-    sleep 1
+    sleep 2
     killall -KILL beszel-agent 2>/dev/null
+    sleep 1
 fi
 
 echo "$BESZEL_ARCH" > "$ARCH_FILE"
@@ -153,9 +173,23 @@ set_perm "$MODPATH/uninstall.sh" 0 0 0755
 chmod 700 "$CONFIG_DIR"
 chown 0:0 "$CONFIG_DIR"
 
-if [ "$NEED_RESTART" = "1" ]; then
-    ui_print "- Restarting agent..."
-    sh "$MODPATH/service.sh" &
+if [ "$NEED_RESTART" = "1" ] && [ -f "$CONFIG_DIR/.env" ]; then
+    ui_print "- Starting agent..."
+    
+    KEY=$(grep -E '^KEY=' "$CONFIG_DIR/.env" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    TOKEN=$(grep -E '^TOKEN=' "$CONFIG_DIR/.env" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    HUB_URL=$(grep -E '^HUB_URL=' "$CONFIG_DIR/.env" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    
+    if [ -n "$KEY" ] && [ -n "$TOKEN" ] && [ -n "$HUB_URL" ]; then
+        cd "$CONFIG_DIR"
+        export HOME="$CONFIG_DIR"
+        "$BINDIR/beszel-agent" --key="$KEY" --token="$TOKEN" --url="$HUB_URL" >> "$CONFIG_DIR/beszel-agent.log" 2>&1 &
+        NEW_PID=$!
+        echo "$NEW_PID" > "$PIDFILE"
+        ui_print "- Agent started with PID=$NEW_PID"
+    else
+        ui_print "- WARNING: Config incomplete, agent will start on next boot"
+    fi
 fi
 
 ui_print "- beszel-agent ($BESZEL_ARCH) installed successfully"
