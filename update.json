@@ -1,6 +1,6 @@
 {
-  "version": "v1.2.0",
-  "versionCode": 6,
-  "zipUrl": "https://github.com/LordArrin/beszel-agent-magisk/releases/download/v1.2.0/beszel-agent-magisk-v1.2.0.zip",
+  "version": "v1.2.1",
+  "versionCode": 7,
+  "zipUrl": "https://github.com/LordArrin/beszel-agent-magisk/releases/download/v1.2.1/beszel-agent-magisk-v1.2.1.zip",
   "changelog": "https://raw.githubusercontent.com/LordArrin/beszel-agent-magisk/master/CHANGELOG.md"
 }
