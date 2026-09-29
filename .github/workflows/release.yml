@@ -34,16 +34,10 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           DATE=$(date +%Y-%m-%d)
           
-          TEMP_FILE=$(mktemp)
-          echo "## $VERSION" > "$TEMP_FILE"
-          echo "- Release $VERSION ($DATE)" >> "$TEMP_FILE"
-          echo "" >> "$TEMP_FILE"
-          
-          if [ -f CHANGELOG.md ]; then
-            cat CHANGELOG.md >> "$TEMP_FILE"
-          fi
-          
-          mv "$TEMP_FILE" CHANGELOG.md
+          cat > CHANGELOG.md << EOF
+          ## $VERSION
+          - Release $VERSION ($DATE)
+          EOF
       
       - name: Update update.json
         run: |

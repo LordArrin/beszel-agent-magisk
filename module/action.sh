@@ -84,7 +84,7 @@ check_update() {
             
             echo "- Binary updated successfully to $LATEST_VERSION"
             rm -rf "$TMP_DIR"
-            return 0
+            return 2
         fi
     fi
     
@@ -93,71 +93,92 @@ check_update() {
     return 1
 }
 
-if [ -f "$PIDFILE" ]; then
-    PID=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$PID" ] && [ -d "/proc/$PID" ]; then
-        echo "Status: Running (PID=$PID)"
-    else
-        echo "Status: Stopped"
+is_running() {
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE" 2>/dev/null)
+        if [ -n "$PID" ] && [ -d "/proc/$PID" ]; then
+            return 0
+        fi
         rm -f "$PIDFILE"
     fi
-else
-    echo "Status: Stopped"
-fi
+    return 1
+}
 
-echo ""
+start_agent() {
+    if [ ! -f "$BIN" ]; then
+        echo "ERROR: Binary not found"
+        return 1
+    fi
+    
+    if [ ! -f "$ENV_FILE" ]; then
+        echo "ERROR: Config not found"
+        return 1
+    fi
+    
+    KEY=$(grep -E '^KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    TOKEN=$(grep -E '^TOKEN=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    HUB_URL=$(grep -E '^HUB_URL=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    
+    if [ -z "$KEY" ] || [ -z "$TOKEN" ] || [ -z "$HUB_URL" ]; then
+        echo "ERROR: Missing required config values"
+        return 1
+    fi
+    
+    chmod 700 "$CONFIG_DIR"
+    chown 0:0 "$CONFIG_DIR"
+    
+    cd "$CONFIG_DIR" || return 1
+    export HOME="$CONFIG_DIR"
+    
+    "$BIN" --key="$KEY" --token="$TOKEN" --url="$HUB_URL" >> "$LOG" 2>&1 &
+    NEW_PID=$!
+    echo "$NEW_PID" > "$PIDFILE"
+    
+    sleep 2
+    if [ -d "/proc/$NEW_PID" ]; then
+        echo "Agent started (PID=$NEW_PID)"
+        return 0
+    else
+        echo "ERROR: Failed to start"
+        rm -f "$PIDFILE"
+        return 1
+    fi
+}
+
+# Main logic
+UPDATED=0
 check_update
+UPDATED=$?
+
+if [ $UPDATED -eq 2 ]; then
+    echo ""
+    echo "Binary was updated, restarting agent..."
+    start_agent
+elif [ $UPDATED -eq 0 ]; then
+    if is_running; then
+        PID=$(cat "$PIDFILE" 2>/dev/null)
+        echo ""
+        echo "Status: Running (PID=$PID)"
+        echo "No restart needed."
+    else
+        echo ""
+        echo "Status: Stopped"
+        echo "Starting agent..."
+        start_agent
+    fi
+else
+    echo ""
+    echo "Update check failed, trying to start agent anyway..."
+    if ! is_running; then
+        start_agent
+    fi
+fi
 
 echo ""
-echo "Starting agent..."
-
-if [ ! -f "$BIN" ]; then
-    echo "ERROR: Binary not found"
-    sleep 5
-    exit 1
-fi
-
-if [ ! -f "$ENV_FILE" ]; then
-    echo "ERROR: Config not found"
-    sleep 5
-    exit 1
-fi
-
-KEY=$(grep -E '^KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-TOKEN=$(grep -E '^TOKEN=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-HUB_URL=$(grep -E '^HUB_URL=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
-if [ -z "$KEY" ] || [ -z "$TOKEN" ] || [ -z "$HUB_URL" ]; then
-    echo "ERROR: Missing required config values"
-    sleep 5
-    exit 1
-fi
-
-chmod 700 "$CONFIG_DIR"
-chown 0:0 "$CONFIG_DIR"
-
-cd "$CONFIG_DIR" || exit 1
-export HOME="$CONFIG_DIR"
-
-"$BIN" --key="$KEY" --token="$TOKEN" --url="$HUB_URL" >> "$LOG" 2>&1 &
-NEW_PID=$!
-echo "$NEW_PID" > "$PIDFILE"
-
-sleep 2
-if [ -d "/proc/$NEW_PID" ]; then
-    echo "Agent started (PID=$NEW_PID)"
-    echo ""
-    echo "Last 10 log lines:"
-    tail -n 10 "$LOG" | while read -r line; do
-        echo "  $line"
-    done
-else
-    echo "ERROR: Failed to start"
-    tail -n 10 "$LOG" | while read -r line; do
-        echo "  $line"
-    done
-    rm -f "$PIDFILE"
-fi
+echo "Last 5 log lines:"
+tail -n 5 "$LOG" 2>/dev/null | while read -r line; do
+    echo "  $line"
+done
 
 echo ""
 echo "Done. Window will close in 10 seconds..."
