@@ -73,20 +73,20 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           ZIP_NAME="beszel-agent-magisk-$VERSION.zip"
           
-          mkdir -p build/module
-          cp -r module/. build/module/
+          mkdir -p build
+          cd build
           
-          mkdir -p build/module/bin
+          cp -r ../module/. .
+          mkdir -p bin
           
-          mkdir -p build/META-INF/com/google/android
+          mkdir -p META-INF/com/google/android
           
-          curl -sLo build/META-INF/com/google/android/update-binary \
+          curl -sLo META-INF/com/google/android/update-binary \
             https://raw.githubusercontent.com/topjohnwu/Magisk/master/scripts/module_installer.sh
           
-          echo "#MAGISK" > build/META-INF/com/google/android/updater-script
+          echo "#MAGISK" > META-INF/com/google/android/updater-script
           
-          cd build
-          zip -r "../$ZIP_NAME" module META-INF
+          zip -r "../$ZIP_NAME" . -x "*.git*" "*.DS_Store"
           cd ..
           
           cp module/.env.example beszel.txt
