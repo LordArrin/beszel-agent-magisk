@@ -1,3 +1,6 @@
+## v1.1.0
+- Release v1.1.0 (2026-09-29)
+
 ## v1.0.1
 - Fix arch detection
 ## v1.0.0
