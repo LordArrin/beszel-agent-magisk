@@ -74,7 +74,9 @@ jobs:
           ZIP_NAME="beszel-agent-magisk-$VERSION.zip"
           
           mkdir -p build/module
-          cp -r module/* build/module/
+          cp -r module/. build/module/
+          
+          mkdir -p build/module/bin
           
           mkdir -p build/META-INF/com/google/android
           
@@ -87,7 +89,9 @@ jobs:
           zip -r "../$ZIP_NAME" module META-INF
           cd ..
           
-          echo "Created $ZIP_NAME"
+          cp module/.env.example beszel.txt
+          
+          echo "Created $ZIP_NAME and beszel.txt"
       
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -98,12 +102,17 @@ jobs:
             ## Beszel Agent Magisk Module ${{ steps.version.outputs.version }}
             
             ### Installation
-            Flash the zip file in Magisk/KernelSU manager.
+            1. Flash the zip file in Magisk/KernelSU manager
+            2. Copy `beszel.txt` to `/sdcard/` before installation OR edit `/data/adb/beszel-agent/.env` after installation
             
             ### Configuration
-            Edit `/data/adb/beszel-agent/.env` with your Beszel Hub credentials.
+            Edit the `.env` file with your Beszel Hub credentials:
+            - `KEY` - Public key from Hub
+            - `TOKEN` - Agent token
+            - `HUB_URL` - Hub URL
           files: |
             beszel-agent-magisk-${{ steps.version.outputs.version }}.zip
+            beszel.txt
           draft: false
           prerelease: false
         env:
