@@ -27,69 +27,112 @@ esac
 
 BINDIR="$MODPATH/bin"
 CONFIG_DIR="/data/adb/beszel-agent"
+VERSION_FILE="$CONFIG_DIR/.version"
+ARCH_FILE="$CONFIG_DIR/.arch"
+
 mkdir -p "$BINDIR" "$CONFIG_DIR"
 
-cd "$BINDIR" || abort "! Failed to enter $BINDIR"
-
-download_binary() {
-    local arch="$1"
-    local url="https://github.com/henrygd/beszel/releases/latest/download/beszel-agent_linux_${arch}.tar.gz"
-    local http_code
-    
+get_latest_version() {
     if command -v curl >/dev/null 2>&1; then
-        http_code=$(curl -sLo /dev/null -w "%{http_code}" --connect-timeout 10 "$url" 2>/dev/null)
-        if [ "$http_code" = "200" ]; then
-            curl -sLo beszel-agent.tar.gz "$url"
+        curl -s https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r'
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r'
+    fi
+}
+
+CURRENT_VERSION=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '\r')
+CURRENT_ARCH=$(cat "$ARCH_FILE" 2>/dev/null | tr -d '\r')
+LATEST_VERSION=$(get_latest_version)
+
+ui_print "- Current version: ${CURRENT_VERSION:-not installed}"
+ui_print "- Latest version: ${LATEST_VERSION:-unknown}"
+
+NEED_DOWNLOAD=0
+NEED_RESTART=0
+
+if [ -z "$LATEST_VERSION" ]; then
+    ui_print "- WARNING: Failed to check latest version, assuming current is latest"
+    if [ ! -f "$BINDIR/beszel-agent" ] && [ -z "$CURRENT_VERSION" ]; then
+        abort "! No binary found and cannot determine version"
+    fi
+elif [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+    NEED_DOWNLOAD=1
+    ui_print "- Update available: ${CURRENT_VERSION:-none} -> $LATEST_VERSION"
+elif [ ! -f "$CONFIG_DIR/../modules/beszel-agent/bin/beszel-agent" ] && [ ! -f "$BINDIR/beszel-agent" ]; then
+    NEED_DOWNLOAD=1
+    ui_print "- Binary not found, downloading..."
+else
+    ui_print "- Binary is up to date"
+    if [ -n "$CURRENT_VERSION" ] && [ -f "$CONFIG_DIR/../modules/beszel-agent/bin/beszel-agent" ]; then
+        cp "$CONFIG_DIR/../modules/beszel-agent/bin/beszel-agent" "$BINDIR/beszel-agent" 2>/dev/null
+        ui_print "- Copied existing binary to new module path"
+    fi
+fi
+
+if [ "$NEED_DOWNLOAD" = "1" ]; then
+    cd "$BINDIR" || abort "! Failed to enter $BINDIR"
+    
+    download_binary() {
+        local arch="$1"
+        local url="https://github.com/henrygd/beszel/releases/latest/download/beszel-agent_linux_${arch}.tar.gz"
+        local http_code
+        
+        if command -v curl >/dev/null 2>&1; then
+            http_code=$(curl -sLo /dev/null -w "%{http_code}" --connect-timeout 10 "$url" 2>/dev/null)
+            if [ "$http_code" = "200" ]; then
+                curl -sLo beszel-agent.tar.gz "$url"
+                [ -s beszel-agent.tar.gz ] && return 0
+            fi
+        fi
+        
+        if command -v wget >/dev/null 2>&1; then
+            wget -qO beszel-agent.tar.gz --timeout=10 "$url" 2>/dev/null
             [ -s beszel-agent.tar.gz ] && return 0
+        fi
+        
+        rm -f beszel-agent.tar.gz
+        return 1
+    }
+    
+    ui_print "- Downloading beszel-agent..."
+    DOWNLOADED=0
+    if download_binary "$BESZEL_ARCH"; then
+        DOWNLOADED=1
+    elif [ -n "$FALLBACK_ARCH" ]; then
+        if download_binary "$FALLBACK_ARCH"; then
+            DOWNLOADED=1
+            BESZEL_ARCH="$FALLBACK_ARCH"
         fi
     fi
     
-    if command -v wget >/dev/null 2>&1; then
-        wget -qO beszel-agent.tar.gz --timeout=10 "$url" 2>/dev/null
-        [ -s beszel-agent.tar.gz ] && return 0
+    if [ "$DOWNLOADED" = "0" ] || [ ! -s beszel-agent.tar.gz ]; then
+        rm -f beszel-agent.tar.gz
+        abort "! Failed to download beszel-agent"
     fi
     
-    rm -f beszel-agent.tar.gz
-    return 1
-}
-
-ui_print "- Downloading beszel-agent..."
-DOWNLOADED=0
-if download_binary "$BESZEL_ARCH"; then
-    DOWNLOADED=1
-elif [ -n "$FALLBACK_ARCH" ]; then
-    if download_binary "$FALLBACK_ARCH"; then
-        DOWNLOADED=1
-        BESZEL_ARCH="$FALLBACK_ARCH"
+    if tar -xzf beszel-agent.tar.gz; then
+        rm -f beszel-agent.tar.gz LICENSE readme.md README.md
+    else
+        rm -f beszel-agent.tar.gz
+        abort "! Failed to extract beszel-agent.tar.gz"
     fi
+    
+    [ ! -f beszel-agent ] && abort "! beszel-agent binary not found"
+    
+    NEED_RESTART=1
+    ui_print "- Binary downloaded and extracted"
 fi
 
-if [ "$DOWNLOADED" = "0" ] || [ ! -s beszel-agent.tar.gz ]; then
-    rm -f beszel-agent.tar.gz
-    abort "! Failed to download beszel-agent"
+if [ "$NEED_RESTART" = "1" ]; then
+    ui_print "- Stopping existing agent..."
+    killall -TERM beszel-agent 2>/dev/null
+    sleep 1
+    killall -KILL beszel-agent 2>/dev/null
 fi
 
-if tar -xzf beszel-agent.tar.gz; then
-    rm -f beszel-agent.tar.gz LICENSE readme.md README.md
-else
-    rm -f beszel-agent.tar.gz
-    abort "! Failed to extract beszel-agent.tar.gz"
-fi
-
-[ ! -f beszel-agent ] && abort "! beszel-agent binary not found"
-
-LATEST_VERSION=$(curl -s https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r')
-if [ -z "$LATEST_VERSION" ] && command -v wget >/dev/null 2>&1; then
-    LATEST_VERSION=$(wget -qO- https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r')
-fi
-
-echo "$BESZEL_ARCH" > "$CONFIG_DIR/.arch"
-echo "$LATEST_VERSION" > "$CONFIG_DIR/.version"
+echo "$BESZEL_ARCH" > "$ARCH_FILE"
+echo "$LATEST_VERSION" > "$VERSION_FILE"
 ui_print "- Saved version: $LATEST_VERSION ($BESZEL_ARCH)"
-
-killall -TERM beszel-agent 2>/dev/null
-sleep 1
-killall -KILL beszel-agent 2>/dev/null
 
 if [ ! -f "$CONFIG_DIR/.env" ]; then
     if [ -f "/sdcard/beszel.txt" ]; then
@@ -109,5 +152,10 @@ set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
 chmod 700 "$CONFIG_DIR"
 chown 0:0 "$CONFIG_DIR"
+
+if [ "$NEED_RESTART" = "1" ]; then
+    ui_print "- Restarting agent..."
+    sh "$MODPATH/service.sh" &
+fi
 
 ui_print "- beszel-agent ($BESZEL_ARCH) installed successfully"
