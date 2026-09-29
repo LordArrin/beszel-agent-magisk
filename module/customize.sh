@@ -78,6 +78,15 @@ fi
 
 [ ! -f beszel-agent ] && abort "! beszel-agent binary not found"
 
+LATEST_VERSION=$(curl -s https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r')
+if [ -z "$LATEST_VERSION" ] && command -v wget >/dev/null 2>&1; then
+    LATEST_VERSION=$(wget -qO- https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r')
+fi
+
+echo "$BESZEL_ARCH" > "$CONFIG_DIR/.arch"
+echo "$LATEST_VERSION" > "$CONFIG_DIR/.version"
+ui_print "- Saved version: $LATEST_VERSION ($BESZEL_ARCH)"
+
 killall -TERM beszel-agent 2>/dev/null
 sleep 1
 killall -KILL beszel-agent 2>/dev/null

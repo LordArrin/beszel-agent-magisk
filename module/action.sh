@@ -7,25 +7,47 @@ ENV_FILE="$CONFIG_DIR/.env"
 LOG="$CONFIG_DIR/beszel-agent.log"
 PIDFILE="$CONFIG_DIR/beszel-agent.pid"
 TMP_DIR="$CONFIG_DIR/tmp"
+VERSION_FILE="$CONFIG_DIR/.version"
+ARCH_FILE="$CONFIG_DIR/.arch"
 
 echo "=== Beszel Agent Manager ==="
 echo ""
 
+get_latest_version() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -s https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r'
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- https://api.github.com/repos/henrygd/beszel/releases/latest 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '\r'
+    fi
+}
+
 check_update() {
-    local current_arch
-    current_arch=$(uname -m)
+    [ ! -f "$ARCH_FILE" ] && echo "- ERROR: Architecture file not found" && return 1
     
-    case "$current_arch" in
-        aarch64|arm64) BESZEL_ARCH="arm64" ;;
-        armv7l|armv8l) BESZEL_ARCH="armv7" ;;
-        armv6l) BESZEL_ARCH="arm" ;;
-        x86_64|amd64) BESZEL_ARCH="amd64" ;;
-        *) BESZEL_ARCH="amd64" ;;
-    esac
+    local CURRENT_ARCH=$(cat "$ARCH_FILE" | tr -d '\r')
+    local CURRENT_VERSION=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '\r')
     
-    local url="https://github.com/henrygd/beszel/releases/latest/download/beszel-agent_linux_${BESZEL_ARCH}.tar.gz"
-    
+    echo "- Current version: ${CURRENT_VERSION:-unknown}"
     echo "- Checking for updates..."
+    
+    local LATEST_VERSION=$(get_latest_version)
+    if [ -z "$LATEST_VERSION" ]; then
+        echo "- ERROR: Failed to check latest version"
+        return 1
+    fi
+    
+    echo "- Latest version: $LATEST_VERSION"
+    
+    if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+        echo "- Already up to date"
+        return 0
+    fi
+    
+    echo "- Update available: $CURRENT_VERSION -> $LATEST_VERSION"
+    
+    local url="https://github.com/henrygd/beszel/releases/latest/download/beszel-agent_linux_${CURRENT_ARCH}.tar.gz"
+    
+    echo "- Downloading update..."
     
     mkdir -p "$TMP_DIR"
     cd "$TMP_DIR" || return 1
@@ -58,7 +80,9 @@ check_update() {
             chown 0:0 "$BIN"
             chcon u:object_r:system_file:s0 "$BIN" 2>/dev/null
             
-            echo "- Binary updated successfully"
+            echo "$LATEST_VERSION" > "$VERSION_FILE"
+            
+            echo "- Binary updated successfully to $LATEST_VERSION"
             rm -rf "$TMP_DIR"
             return 0
         fi
@@ -82,7 +106,6 @@ else
 fi
 
 echo ""
-echo "Checking for binary updates..."
 check_update
 
 echo ""
