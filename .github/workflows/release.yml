@@ -1,0 +1,110 @@
+name: Release Magisk Module
+
+on:
+  push:
+    paths:
+      - 'module/module.prop'
+    branches:
+      - master
+
+jobs:
+  release:
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && github.actor != 'github-actions[bot]'"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Extract version from module.prop
+        id: version
+        run: |
+          VERSION=$(grep -E '^version=' module/module.prop | cut -d'=' -f2 | tr -d '\r')
+          VERSION_CODE=$(grep -E '^versionCode=' module/module.prop | cut -d'=' -f2 | tr -d '\r')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION, Code: $VERSION_CODE"
+      
+      - name: Update CHANGELOG.md
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DATE=$(date +%Y-%m-%d)
+          
+          TEMP_FILE=$(mktemp)
+          echo "## $VERSION" > "$TEMP_FILE"
+          echo "- Release $VERSION ($DATE)" >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          
+          if [ -f CHANGELOG.md ]; then
+            cat CHANGELOG.md >> "$TEMP_FILE"
+          fi
+          
+          mv "$TEMP_FILE" CHANGELOG.md
+      
+      - name: Update update.json
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION_CODE="${{ steps.version.outputs.version_code }}"
+          REPO="${{ github.repository }}"
+          
+          cat > update.json << EOF
+          {
+            "version": "$VERSION",
+            "versionCode": $VERSION_CODE,
+            "zipUrl": "https://github.com/$REPO/releases/download/$VERSION/beszel-agent-magisk-$VERSION.zip",
+            "changelog": "https://raw.githubusercontent.com/$REPO/master/CHANGELOG.md"
+          }
+          EOF
+      
+      - name: Commit updated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md update.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update CHANGELOG and update.json for ${{ steps.version.outputs.version }} [skip ci]"
+          git push
+      
+      - name: Build module zip
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ZIP_NAME="beszel-agent-magisk-$VERSION.zip"
+          
+          mkdir -p build/module
+          cp -r module/* build/module/
+          
+          mkdir -p build/META-INF/com/google/android
+          
+          curl -sLo build/META-INF/com/google/android/update-binary \
+            https://raw.githubusercontent.com/topjohnwu/Magisk/master/scripts/module_installer.sh
+          
+          echo "#MAGISK" > build/META-INF/com/google/android/updater-script
+          
+          cd build
+          zip -r "../$ZIP_NAME" module META-INF
+          cd ..
+          
+          echo "Created $ZIP_NAME"
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## Beszel Agent Magisk Module ${{ steps.version.outputs.version }}
+            
+            ### Installation
+            Flash the zip file in Magisk/KernelSU manager.
+            
+            ### Configuration
+            Edit `/data/adb/beszel-agent/.env` with your Beszel Hub credentials.
+          files: |
+            beszel-agent-magisk-${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

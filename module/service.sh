@@ -2,188 +2,63 @@
 
 MODDIR=${0%/*}
 BIN="$MODDIR/bin/beszel-agent"
-PROP_FILE="$MODDIR/module.prop"
 CONFIG_DIR="/data/adb/beszel-agent"
 ENV_FILE="$CONFIG_DIR/.env"
-DATA_DIR="$CONFIG_DIR/data"
 LOG="$CONFIG_DIR/beszel-agent.log"
-PIDFILE="$CONFIG_DIR/supervise.pid"
-
-MIN_BACKOFF=1
-MAX_BACKOFF=300
-RESET_AFTER_SECS=60
+PIDFILE="$CONFIG_DIR/beszel-agent.pid"
 
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG" 2>/dev/null
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$CONFIG_DIR/boot.log"
 }
 
-update_status() {
-    if [ -f "$PROP_FILE" ]; then
-        sed "s|^description=.*|description=$1|" "$PROP_FILE" > "${PROP_FILE}.tmp" 2>/dev/null
-        [ -f "${PROP_FILE}.tmp" ] && mv "${PROP_FILE}.tmp" "$PROP_FILE"
-    fi
-}
+log "Waiting for boot completion..."
+while [ "$(getprop sys.boot_completed)" != "1" ]; do
+    sleep 2
+done
+log "Boot completed"
+
+[ ! -f "$BIN" ] && log "ERROR: Binary not found" && exit 1
+[ ! -f "$ENV_FILE" ] && log "ERROR: Config not found" && exit 1
+
+KEY=$(grep -E '^KEY=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+TOKEN=$(grep -E '^TOKEN=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+HUB_URL=$(grep -E '^HUB_URL=' "$ENV_FILE" | cut -d'=' -f2- | tr -d '\r' | tr -d '"' | tr -d "'" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+[ -z "$KEY" ] && log "ERROR: KEY not set" && exit 1
+[ -z "$TOKEN" ] && log "ERROR: TOKEN not set" && exit 1
+[ -z "$HUB_URL" ] && log "ERROR: HUB_URL not set" && exit 1
 
 if [ -f "$PIDFILE" ]; then
-    old=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$old" ] && [ -d "/proc/$old" ]; then
-        exit 0
+    OLD_PID=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && [ -d "/proc/$OLD_PID" ]; then
+        kill -TERM "$OLD_PID" 2>/dev/null
+        sleep 2
+        kill -KILL "$OLD_PID" 2>/dev/null
     fi
     rm -f "$PIDFILE"
 fi
 
-if command -v resetprop >/dev/null 2>&1; then
-    resetprop -w sys.boot_completed 0
+killall -TERM beszel-agent 2>/dev/null
+sleep 1
+killall -KILL beszel-agent 2>/dev/null
+
+chcon u:object_r:system_file:s0 "$BIN" 2>/dev/null
+chmod 755 "$BIN"
+chmod 700 "$CONFIG_DIR"
+chown 0:0 "$CONFIG_DIR"
+
+cd "$CONFIG_DIR" || exit 1
+export HOME="$CONFIG_DIR"
+
+"$BIN" --key="$KEY" --token="$TOKEN" --url="$HUB_URL" >> "$LOG" 2>&1 &
+NEW_PID=$!
+echo "$NEW_PID" > "$PIDFILE"
+
+sleep 2
+if [ -d "/proc/$NEW_PID" ]; then
+    log "Started successfully (PID=$NEW_PID)"
 else
-    i=0
-    while [ "$(getprop sys.boot_completed)" != "1" ] && [ $i -lt 120 ]; do
-        sleep 1
-        i=$((i + 1))
-    done
-fi
-
-sleep 5
-
-if [ ! -x "$BIN" ]; then
-    [ -f "$BIN" ] && chmod 0755 "$BIN"
-fi
-
-if [ ! -x "$BIN" ]; then
-    log "ERROR: binary missing or not executable: $BIN"
-    update_status "Error: Binary missing"
+    log "ERROR: Failed to start"
+    rm -f "$PIDFILE"
     exit 1
 fi
-
-if [ ! -f "$ENV_FILE" ]; then
-    log "ERROR: config not found: $ENV_FILE"
-    update_status "Error: Config not found"
-    exit 1
-fi
-
-KEY=""
-TOKEN=""
-HUB_URL=""
-FILESYSTEM=""
-LISTEN=""
-SYSTEM_NAME=""
-
-while IFS= read -r line || [ -n "$line" ]; do
-    line=$(printf '%s' "$line" | tr -d '\r')
-    
-    while [ -n "$line" ]; do
-        case "$line" in
-            [[:space:]]*) line=${line#?} ;;
-            *) break ;;
-        esac
-    done
-    
-    [ -z "$line" ] && continue
-    case "$line" in \#*) continue ;; esac
-    case "$line" in set\ *) line=${line#set } ;; esac
-    case "$line" in *=*) ;; *) continue ;; esac
-    
-    key=${line%%=*}
-    val=${line#*=}
-    key=$(printf '%s' "$key" | tr -d '[:space:]')
-    
-    case "$val" in
-        \"*) val=${val#\"}; val=${val%\"} ;;
-        \'*) val=${val#\'}; val=${val%\'} ;;
-    esac
-    
-    case "$key" in
-        KEY) KEY="$val" ;;
-        TOKEN) TOKEN="$val" ;;
-        HUB_URL) HUB_URL="$val" ;;
-        FILESYSTEM) FILESYSTEM="$val" ;;
-        LISTEN) LISTEN="$val" ;;
-        SYSTEM_NAME) SYSTEM_NAME="$val" ;;
-    esac
-done < "$ENV_FILE"
-
-if [ -z "$KEY" ] || [ -z "$TOKEN" ] || [ -z "$HUB_URL" ]; then
-    log "ERROR: KEY, TOKEN, and HUB_URL must be set in $ENV_FILE"
-    update_status "Error: Invalid config"
-    exit 1
-fi
-
-[ -n "$FILESYSTEM" ] || FILESYSTEM="/data"
-
-mkdir -p "$DATA_DIR" 2>/dev/null
-chmod 700 "$DATA_DIR" 2>/dev/null
-
-if [ -z "$SYSTEM_NAME" ]; then
-    DEVICE_MODEL=$(getprop ro.product.model 2>/dev/null)
-    DEVICE_MANUFACTURER=$(getprop ro.product.manufacturer 2>/dev/null)
-    if [ -n "$DEVICE_MODEL" ] && [ -n "$DEVICE_MANUFACTURER" ]; then
-        SYSTEM_NAME="$DEVICE_MANUFACTURER $DEVICE_MODEL"
-    elif [ -n "$DEVICE_MODEL" ]; then
-        SYSTEM_NAME="$DEVICE_MODEL"
-    else
-        SYSTEM_NAME=$(hostname 2>/dev/null)
-    fi
-fi
-
-export FILESYSTEM
-export DATA_DIR
-export SYSTEM_NAME
-[ -n "$LISTEN" ] && export LISTEN
-
-if [ -f "$PIDFILE" ]; then
-    old=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$old" ] && [ -d "/proc/$old" ]; then
-        exit 0
-    fi
-fi
-
-(
-    echo $$ > "$PIDFILE"
-    log "supervisor started pid=$$"
-    update_status "Running beszel-agent"
-    
-    if pidof beszel-agent >/dev/null 2>&1; then
-        log "beszel-agent already running; waiting"
-        while pidof beszel-agent >/dev/null 2>&1; do
-            sleep 5
-        done
-    fi
-    
-    backoff=$MIN_BACKOFF
-    
-    while true; do
-        started=$(date +%s 2>/dev/null)
-        started=${started:-0}
-        
-        log "starting beszel-agent (backoff=${backoff}s)"
-        
-        FILESYSTEM="$FILESYSTEM" DATA_DIR="$DATA_DIR" SYSTEM_NAME="$SYSTEM_NAME" \
-            "$BIN" -k "$KEY" -t "$TOKEN" --url "$HUB_URL" >> "$LOG" 2>&1
-        rc=$?
-        
-        ended=$(date +%s 2>/dev/null)
-        ended=${ended:-0}
-        
-        if [ "$started" -gt 0 ] && [ "$ended" -ge "$started" ]; then
-            ran=$((ended - started))
-        else
-            ran=0
-        fi
-        
-        if [ "$ran" -ge "$RESET_AFTER_SECS" ]; then
-            backoff=$MIN_BACKOFF
-        fi
-        
-        update_status "Restarting in ${backoff}s"
-        log "agent exited rc=$rc after ${ran}s; retry in ${backoff}s"
-        sleep "$backoff"
-        
-        next=$((backoff * 2))
-        if [ "$next" -gt "$MAX_BACKOFF" ]; then
-            backoff=$MAX_BACKOFF
-        else
-            backoff=$next
-        fi
-    done
-) >/dev/null 2>&1 &
-
-exit 0

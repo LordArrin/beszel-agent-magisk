@@ -1,9 +1,9 @@
 #!/system/bin/sh
 
 MODDIR=${0%/*}
-PROP_FILE="$MODDIR/module.prop"
+CONFIG_DIR="/data/adb/beszel-agent"
 
-# Update module description to show status in KernelSU/Magisk UI
-if [ -f "$PROP_FILE" ]; then
-  sed -i 's|^description=.*|description=🟡 Starting beszel-agent...|' "$PROP_FILE"
-fi
+chmod 700 "$CONFIG_DIR" 2>/dev/null
+chown 0:0 "$CONFIG_DIR" 2>/dev/null
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] post-fs-data: Module loaded" >> "$CONFIG_DIR/boot.log"

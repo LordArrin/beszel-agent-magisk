@@ -1,7 +1,7 @@
 id=beszel-agent
 name=Beszel Agent
-version=v1.0.1
-versionCode=2
+version=v1.1.0
+versionCode=4
 author=LordArrin
 description=Runs beszel-agent as a Magisk/KernelSU service for system monitoring
-updateJson=https://raw.githubusercontent.com/LordArrin/beszel-agent-magisk/main/update.json
+updateJson=https://raw.githubusercontent.com/LordArrin/beszel-agent-magisk/master/update.json
